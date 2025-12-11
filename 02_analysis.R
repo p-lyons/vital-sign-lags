@@ -1,31 +1,4 @@
 
-# setup ------------------------------------------------------------------------
-
-## libraries -------------------------------------------------------------------
-
-library(gtsummary)
-library(tidytable)
-library(collapse)
-library(ggplot2)
-library(stringr)
-library(ggh4x)
-library(here)
-
-## helpers ---------------------------------------------------------------------
-
-today  = format(Sys.Date(), "%y%m%d")
-vitals = c("HR", "SBP", "RR", "SpO2", "Temperature")
-vcolor = c("#003f5c", "#58508d", "#bc5090", "#ff6361", "#ffa600")
-
-### outlier ranges -------------------------------------------------------------
-
-out =
-  tibble::tibble(
-    measure = c("hr", "sbp", "dbp", "rr", "spo2", "temp"),
-    lo      = c(060,   090,   050,   010,   090,   096.0),
-    hi      = c(120,   180,   110,   020,   100,   100.3)
-  )
-
 # initial data prep ------------------------------------------------------------
 
 ## load data -------------------------------------------------------------------
@@ -76,22 +49,6 @@ df =
   fselect(-admit_dttm)
 
 rm(out); gc()
-
-# frequency of observations ----------------------------------------------------
-
-## round by 10 minutes
-
-freqs = 
-  fselect(df, csn, h_day, taken_dttm) |>
-  funique() |>
-  fgroup_by(csn, h_day) |>
-  fnobs() |>
-  fmutate(taken_freq = if_else(taken_dttm > 24, 25L, taken_dttm)) |>
-  fselect(-taken_dttm)
-
-df = join(df, freqs, how = "left", multiple = T)
-
-rm(freqs); gc()
 
 ## confirm no duplicates by taken time -----------------------------------------
 
@@ -207,7 +164,6 @@ rm(n_taken, n_rec, n_batch, frq_batch, out); gc()
 fsubset(df, measure == "HR") |> select(abnormal, lag_min) |> tbl_summary(by = abnormal) |> add_p()
 fsubset(df, measure == "RR") |> select(abnormal, lag_min) |> tbl_summary(by = abnormal) |> add_p()
 
-
 # models -----------------------------------------------------------------------
 
 ## GEE -------------------------------------------------------------------------
@@ -216,16 +172,14 @@ fsubset(df, measure == "RR") |> select(abnormal, lag_min) |> tbl_summary(by = ab
 
 df = mutate(df, lag_min  = if_else(lag_min == 0, 0.01, lag_min))
 df = mutate(df, abnormal = qF(abnormal))
+df = select(df, -ends_with("dttm"), -starts_with("shift"), -tmrw_7a) # drop unneeded columns to maximize efficiency (smaller df) 
+
+gc()
 
 ## create wave variable for AR(1) autocorrelation -- computationally overwhelming
 # df = 
 #   roworder(df, taken_dttm, recrd_dttm, measure, value) |>
 #   mutate(wave = dense_rank(taken_dttm), .by = csn)
-
-### drop unneeded columns to maximize efficiency (smaller df) ------------------
-
-df = select(df, -ends_with("dttm"), -starts_with("shift"), -tmrw_7a)
-gc()
 
 ### fit model ------------------------------------------------------------------
 
@@ -274,6 +228,39 @@ upper_ci = average_marginal_effect + z_value * se_average_marginal_effect
 
 cat("Average Marginal Effect:", average_marginal_effect, "\n")
 cat("95% CI:", lower_ci, "to", upper_ci, "\n")
+
+### save model log -------------------------------------------------------------
+
+model_log = model_tidy |>
+  mutate(
+    type = "coefficient"
+  )
+
+marginal_row = tibble::tibble(
+  term        = "h_to_shift_change (AME)",
+  estimate    = average_marginal_effect,
+  std.error   = se_average_marginal_effect,
+  statistic   = NA_real_,
+  p.value     = NA_real_,
+  conf.low    = lower_ci,
+  conf.high   = upper_ci,
+  type        = "marginal_effect"
+)
+
+model_meta = tibble::tibble(
+  term        = c("correlation_structure", "n_clusters", "n_observations", "scale_estimate"),
+  estimate    = c(NA_real_, length(unique(model$id)), nrow(df), summary(model)$geese$scale$estimate),
+  std.error   = NA_real_,
+  statistic   = NA_real_,
+  p.value     = NA_real_,
+  conf.low    = NA_real_,
+  conf.high   = NA_real_,
+  type        = c("exchangeable", "meta", "meta", "meta")
+)
+
+model_log = bind_rows(model_log, marginal_row, model_meta)
+
+write.csv(model_log, here("output", paste0("model_log_", today, ".csv")), row.names = FALSE)
 
 # table 2: values and lag by measurement and location --------------------------
 
