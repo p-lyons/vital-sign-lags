@@ -29,6 +29,17 @@ source("03_figures.R")
 
 The setup script will install any missing packages automatically.
 
+The analysis script will load a data frame with the following columns: 
+- mrn
+- csn
+- admit_dttm
+- taken_dttm (time of vital sign measurement)
+- recrd_dttm (time of vital sign recording/validation)
+- lag_min (difference, in minutes, between taken_dttm and recrd_dttm)
+- measure (closed vocabulary = hr, rr, sbp, spo2, temp)
+- value (the vital sign value)
+- loc_cat (ED, wards, or ICU)
+
 ## Data Availability
 
 The data underlying this study contain protected health information from electronic health records and cannot be shared publicly. Analysis code is provided for transparency and methodological review.
